@@ -109,9 +109,13 @@ jobs:
           $port = 9131
           $dashboardStdout = Join-Path $env:RUNNER_TEMP "hermes-dashboard.stdout.log"
           $dashboardStderr = Join-Path $env:RUNNER_TEMP "hermes-dashboard.stderr.log"
+          $dashboardCwd = Split-Path -Parent $exe
+          $env:PYTHONUNBUFFERED = "1"
+          $env:PYTHONFAULTHANDLER = "1"
           Remove-Item -Force -ErrorAction SilentlyContinue $dashboardStdout, $dashboardStderr
           $proc = Start-Process `
             -FilePath $exe `
+            -WorkingDirectory $dashboardCwd `
             -ArgumentList @("dashboard", "--host", "127.0.0.1", "--port", "$port", "--no-open") `
             -PassThru `
             -WindowStyle Hidden `
@@ -119,6 +123,7 @@ jobs:
             -RedirectStandardError $dashboardStderr
           try {
             $ok = $false
+            $lastRequestError = ""
             for ($i = 0; $i -lt 180; $i++) {
               if ($proc.HasExited) {
                 throw "Dashboard exited early with code $($proc.ExitCode)."
@@ -134,10 +139,14 @@ jobs:
                 }
               }
               catch {
+                $lastRequestError = $_.Exception.Message
                 Start-Sleep -Seconds 1
               }
             }
             if (-not $ok) {
+              Write-Host "Last dashboard request error: $lastRequestError"
+              Write-Host "--- netstat :$port ---"
+              netstat -ano | findstr ":$port" || Write-Host "No listener found for port $port"
               throw "Dashboard smoke test timed out."
             }
           }
@@ -156,6 +165,7 @@ jobs:
           }
 
       - name: Generate checksum
+        if: always()
         id: package
         shell: pwsh
         run: |
@@ -171,6 +181,7 @@ jobs:
           Write-Host "SHA256: $hash"
 
       - name: Upload Windows package artifact
+        if: always() && steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.zip_name }}
