@@ -23,7 +23,21 @@ def _default_package_name() -> str:
     return sys.platform
 
 
+def _force_utf8_stdio() -> None:
+    """Avoid Windows console codepage crashes when packaged code prints Unicode."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 _RESOURCE_ROOT = _resource_root()
+_force_utf8_stdio()
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 os.environ.setdefault("HERMES_LANG", "zh_CN")
 os.environ.setdefault("LANG", "zh_CN.UTF-8")
 os.environ.setdefault("HERMES_SKIP_WEB_BUILD", "1")
