@@ -46,6 +46,11 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Configure Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+
       - name: Set up Python
         shell: pwsh
         run: |
@@ -69,6 +74,10 @@ jobs:
       - name: Build Windows package
         shell: pwsh
         run: |
+          git config --global core.longpaths true
+          $env:UV_CACHE_DIR = "C:\uv-cache"
+          New-Item -ItemType Directory -Force -Path $env:UV_CACHE_DIR | Out-Null
+
           $buildArgs = @{
             Python = ".\.venv-windows-package\Scripts\python.exe"
             Extras = @("all")
