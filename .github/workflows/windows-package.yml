@@ -69,18 +69,18 @@ jobs:
       - name: Build Windows package
         shell: pwsh
         run: |
-          $buildArgs = @(
-            "-Python", ".\.venv-windows-package\Scripts\python.exe",
-            "-Extras", "all"
-          )
+          $buildArgs = @{
+            Python = ".\.venv-windows-package\Scripts\python.exe"
+            Extras = @("all")
+          }
           if ("${{ inputs.include_rl }}" -eq "true") {
-            $buildArgs += "-IncludeRl"
+            $buildArgs.IncludeRl = $true
           }
           if ("${{ inputs.include_yc_bench }}" -eq "true") {
             if ("${{ inputs.python_version }}" -notmatch "^3\.(1[2-9]|[2-9][0-9])") {
               throw "include_yc_bench requires python_version 3.12 or newer."
             }
-            $buildArgs += "-IncludeYcBench"
+            $buildArgs.IncludeYcBench = $true
           }
           .\packaging\windows\build_windows.ps1 @buildArgs
 
