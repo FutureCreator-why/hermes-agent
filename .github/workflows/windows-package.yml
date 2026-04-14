@@ -107,10 +107,19 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:HERMES_HOME | Out-Null
 
           $port = 9131
-          $proc = Start-Process -FilePath $exe -ArgumentList @("dashboard", "--host", "127.0.0.1", "--port", "$port") -PassThru -WindowStyle Hidden
+          $dashboardStdout = Join-Path $env:RUNNER_TEMP "hermes-dashboard.stdout.log"
+          $dashboardStderr = Join-Path $env:RUNNER_TEMP "hermes-dashboard.stderr.log"
+          Remove-Item -Force -ErrorAction SilentlyContinue $dashboardStdout, $dashboardStderr
+          $proc = Start-Process `
+            -FilePath $exe `
+            -ArgumentList @("dashboard", "--host", "127.0.0.1", "--port", "$port", "--no-open") `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $dashboardStdout `
+            -RedirectStandardError $dashboardStderr
           try {
             $ok = $false
-            for ($i = 0; $i -lt 60; $i++) {
+            for ($i = 0; $i -lt 180; $i++) {
               if ($proc.HasExited) {
                 throw "Dashboard exited early with code $($proc.ExitCode)."
               }
@@ -135,6 +144,14 @@ jobs:
           finally {
             if ($proc -and -not $proc.HasExited) {
               Stop-Process -Id $proc.Id -Force
+            }
+            if (Test-Path $dashboardStdout) {
+              Write-Host "--- dashboard stdout ---"
+              Get-Content $dashboardStdout -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $dashboardStderr) {
+              Write-Host "--- dashboard stderr ---"
+              Get-Content $dashboardStderr -ErrorAction SilentlyContinue
             }
           }
 
