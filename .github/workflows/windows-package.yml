@@ -1,0 +1,155 @@
+name: Windows Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: "Python version used for the packaged runtime"
+        required: true
+        default: "3.11"
+        type: choice
+        options:
+          - "3.11"
+          - "3.12"
+      include_rl:
+        description: "Include RL runtime extras (tinker, atroposlib, wandb)"
+        required: true
+        default: true
+        type: boolean
+      include_yc_bench:
+        description: "Include yc-bench extra; requires Python 3.12+"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows x64 package
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        shell: pwsh
+        run: |
+          uv python install "${{ inputs.python_version }}"
+          uv venv .venv-windows-package --python "${{ inputs.python_version }}"
+          .\.venv-windows-package\Scripts\python.exe --version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build Web UI
+        shell: pwsh
+        run: |
+          npm ci --prefix web
+          npm run build --prefix web
+
+      - name: Build Windows package
+        shell: pwsh
+        run: |
+          $buildArgs = @(
+            "-Python", ".\.venv-windows-package\Scripts\python.exe",
+            "-Extras", "all"
+          )
+          if ("${{ inputs.include_rl }}" -eq "true") {
+            $buildArgs += "-IncludeRl"
+          }
+          if ("${{ inputs.include_yc_bench }}" -eq "true") {
+            if ("${{ inputs.python_version }}" -notmatch "^3\.(1[2-9]|[2-9][0-9])") {
+              throw "include_yc_bench requires python_version 3.12 or newer."
+            }
+            $buildArgs += "-IncludeYcBench"
+          }
+          .\packaging\windows\build_windows.ps1 @buildArgs
+
+      - name: Smoke test packaged exe
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "dist-windows-cn\HermesAgent\HermesAgent.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Packaged exe not found: $exe"
+          }
+
+          & $exe version
+
+          $env:HERMES_HOME = Join-Path $env:RUNNER_TEMP "hermes-smoke-home"
+          New-Item -ItemType Directory -Force -Path $env:HERMES_HOME | Out-Null
+
+          $port = 9131
+          $proc = Start-Process -FilePath $exe -ArgumentList @("dashboard", "--host", "127.0.0.1", "--port", "$port") -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              if ($proc.HasExited) {
+                throw "Dashboard exited early with code $($proc.ExitCode)."
+              }
+              try {
+                $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 2
+                if ($response.StatusCode -eq 200) {
+                  if ($response.Content -notlike '*lang="zh-CN"*') {
+                    throw 'Dashboard responded but did not include lang="zh-CN".'
+                  }
+                  $ok = $true
+                  break
+                }
+              }
+              catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $ok) {
+              throw "Dashboard smoke test timed out."
+            }
+          }
+          finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
+
+      - name: Generate checksum
+        id: package
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path dist-windows-cn -Filter "Hermes-Agent-*-Windows-*-zh.zip" | Select-Object -First 1
+          if (-not $zip) {
+            throw "Windows package zip not found."
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $zip.FullName).Hash.ToLowerInvariant()
+          "$hash  $($zip.Name)" | Set-Content -Path "dist-windows-cn\SHA256SUMS.txt" -Encoding ascii
+          "zip_name=$($zip.BaseName)" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "Package: $($zip.FullName)"
+          Write-Host "SHA256: $hash"
+
+      - name: Upload Windows package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.zip_name }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist-windows-cn/Hermes-Agent-*-Windows-*-zh.zip
+            dist-windows-cn/SHA256SUMS.txt
