@@ -90,8 +90,15 @@ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $OutDir
 
 function Test-PythonModule {
     param([string]$Name)
-    & $Python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$Name') else 1)" *> $null
-    return $LASTEXITCODE -eq 0
+    $PreviousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+    try {
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $Python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$Name') else 1)" *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        $PSNativeCommandUseErrorActionPreference = $PreviousNativeCommandPreference
+    }
 }
 
 $PyiArgs = @(
